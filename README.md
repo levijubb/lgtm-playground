@@ -1,4 +1,6 @@
-# grafana-playground
+# LGTM
+
+![LGTM Stack: a Grafana, Loki, Tempo, and Prometheus playground with a sample HTTP dashboard](hero.png)
 
 A full app observability playground for logs, traces, and OpenTelemetry. It runs a local Grafana LGTM stack — Loki, Grafana, Tempo, and Prometheus — next to a small multi-service shop called Orbit Shop, so you can click through a real app and watch active telemetry, logs and errors.
 
