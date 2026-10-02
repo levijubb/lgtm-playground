@@ -1,0 +1,130 @@
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  tempo_data:
+
+networks:
+  obs:
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    restart: unless-stopped
+    volumes:
+      - ./config/otel-collector.yml:/etc/otel/config.yaml
+    command: ["--config=/etc/otel/config.yaml"]
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:4317:4317"   # OTLP gRPC
+      - "${BIND_ADDR:-127.0.0.1}:4318:4318"   # OTLP HTTP
+    networks: [obs]
+    depends_on: [prometheus, loki, tempo]
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks: [obs]
+
+  loki:
+    image: grafana/loki:3.7.7
+    restart: unless-stopped
+    volumes:
+      - ./config/loki.yml:/etc/loki/config.yaml
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    command: -config.file=/etc/loki/config.yaml
+    networks: [obs]
+
+  tempo-init:
+    image: busybox:1.37
+    user: root
+    command: ["chown", "-R", "10001:10001", "/var/tempo"]
+    volumes:
+      - tempo_data:/var/tempo
+
+  tempo:
+    image: grafana/tempo:3.0.0
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./config/tempo.yml:/etc/tempo.yaml
+      - tempo_data:/var/tempo
+    networks: [obs]
+    depends_on:
+      tempo-init:
+        condition: service_completed_successfully
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana-datasources.yml:/etc/grafana/provisioning/datasources/ds.yaml
+      - ./config/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./dashboards:/etc/grafana/dashboards
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=changeme
+    networks: [obs]
+    depends_on: [prometheus, loki, tempo]
+
+  shop-frontend:
+    build: ./demo
+    restart: unless-stopped
+    environment:
+      SHOP_ROLE: frontend
+      API_URL: http://shop-api:8080
+      WORKER_URL: http://shop-worker:8080
+      OTEL_SERVICE_NAME: shop-frontend
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8081:8080"
+    networks: [obs]
+    depends_on: [otel-collector, shop-api, shop-worker]
+
+  shop-api:
+    build: ./demo
+    restart: unless-stopped
+    environment:
+      SHOP_ROLE: api
+      OTEL_SERVICE_NAME: shop-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    networks: [obs]
+    depends_on: [otel-collector]
+
+  shop-worker:
+    build: ./demo
+    restart: unless-stopped
+    environment:
+      SHOP_ROLE: worker
+      OTEL_SERVICE_NAME: shop-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    networks: [obs]
+    depends_on: [otel-collector]
+
+  shop-loadgen:
+    build: ./demo
+    restart: unless-stopped
+    environment:
+      SHOP_ROLE: loadgen
+      TARGET_URL: http://shop-frontend:8080
+      OTEL_SERVICE_NAME: shop-loadgen
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      LOADGEN_INTERVAL: "0.8"
+    networks: [obs]
+    depends_on: [shop-frontend]
