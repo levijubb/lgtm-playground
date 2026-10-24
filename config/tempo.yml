@@ -36,7 +36,7 @@ overrides:
   defaults:
     metrics_generator:
       processors: ["span-metrics", "service-graphs"]
-      generate_native_histograms: both
+      generate_native_histograms: classic
 
 usage_report:
   reporting_enabled: false
